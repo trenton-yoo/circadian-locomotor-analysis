@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Locomotor analysis</title>
+  <style>
+    body { font-family: Georgia, serif; margin: 2rem; max-width: 1100px; line-height: 1.4; }
+    h1, h2 { font-weight: normal; }
+    .row { display: flex; gap: 1.5rem; align-items: flex-start; flex-wrap: wrap; }
+    .workspace {
+      flex: 1 1 640px;
+      border: 1px solid #333;
+      background: #fafafa;
+      padding: 0.75rem 1rem;
+      min-height: 280px;
+      overflow: auto;
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      font-size: 13px;
+    }
+    .controls { flex: 0 0 240px; border: 1px solid #333; padding: 0.75rem 1rem; }
+    label { display: block; margin-top: 0.75rem; }
+    input[type="number"], input[type="date"], input[type="text"] { width: 100%; box-sizing: border-box; }
+    table { border-collapse: collapse; width: 100%; margin: 0.5rem 0 1rem; }
+    th, td { border: 1px solid #999; padding: 0.25rem 0.4rem; text-align: left; }
+    th { background: #eee; }
+    .error { color: #8b0000; border: 1px solid #8b0000; padding: 0.5rem; margin: 1rem 0; }
+    .flash { color: #8b0000; }
+    button, .button {
+      margin-top: 1rem;
+      padding: 0.4rem 0.8rem;
+      font: inherit;
+      cursor: pointer;
+    }
+    .muted { color: #555; }
+  </style>
+</head>
+<body>
+  <h1>Locomotor analysis</h1>
+  <p class="muted">Upload one Excel file, review the preview, set parameters, then run analysis.</p>
+
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}
+      <ul class="flash">
+        {% for m in messages %}<li>{{ m }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+  {% endwith %}
+
+  <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data">
+    <label>Excel file (.xlsx)
+      <input type="file" name="xlsx_file" accept=".xlsx" required>
+    </label>
+    <button type="submit">Upload and preprocess</button>
+  </form>
+</body>
+</html>

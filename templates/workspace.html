@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Workspace — {{ job_id }}</title>
+  <style>
+    body { font-family: Georgia, serif; margin: 2rem; max-width: 1200px; line-height: 1.4; }
+    h1, h2, h3 { font-weight: normal; }
+    .row { display: flex; gap: 1.5rem; align-items: flex-start; flex-wrap: wrap; }
+    .workspace {
+      flex: 1 1 700px;
+      border: 1px solid #333;
+      background: #f7f7f2;
+      padding: 0.75rem 1rem;
+      min-height: 320px;
+      overflow: auto;
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      font-size: 12.5px;
+    }
+    .controls {
+      flex: 0 0 260px;
+      border: 1px solid #333;
+      padding: 0.75rem 1rem;
+      background: #fff;
+    }
+    label { display: block; margin-top: 0.75rem; font-family: Georgia, serif; font-size: 0.95rem; }
+    input[type="number"], input[type="date"], input[type="text"] {
+      width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.25rem;
+    }
+    table { border-collapse: collapse; width: 100%; margin: 0.5rem 0 1rem; }
+    th, td { border: 1px solid #999; padding: 0.2rem 0.35rem; text-align: left; white-space: nowrap; }
+    th { background: #eaeaea; }
+    .error { color: #8b0000; border: 1px solid #8b0000; padding: 0.5rem; margin-bottom: 1rem; white-space: pre-wrap; }
+    button, .button {
+      display: inline-block;
+      margin-top: 1rem;
+      padding: 0.45rem 0.9rem;
+      font: inherit;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      border: 1px solid #333;
+      background: #f0f0f0;
+    }
+    .confirm { font-weight: bold; width: 100%; }
+    .muted { color: #555; font-family: Georgia, serif; }
+    a.top { font-family: Georgia, serif; }
+  </style>
+</head>
+<body>
+  <p><a class="top" href="{{ url_for('index') }}">← New upload</a></p>
+  <h1>Workspace</h1>
+  <p class="muted">Job {{ job_id }}</p>
+
+  {% if error %}
+    <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <div class="row">
+    <div class="workspace">
+      {% if preview %}
+        <h2>File: {{ preview.input_file }}</h2>
+        <p>
+          bins={{ preview.n_bins }},
+          bin_size={{ preview.bin_minutes }} min,
+          clock {{ preview.first_clock }} → {{ preview.last_clock }},
+          midnight wraps={{ preview.n_midnight_wraps }}
+        </p>
+
+        <h3>Animal metadata (edit labels in the form →)</h3>
+        <table>
+          <tr>
+            <th>col</th><th>animal #</th><th>cage</th><th>label</th>
+          </tr>
+          {% for a in preview.animal_meta %}
+          <tr>
+            <td>{{ a.excel_col_letter }}</td>
+            <td>{{ a.animal_id }}</td>
+            <td>{{ a.cage_code }}</td>
+            <td>{{ a.animal_label }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+
+        <h3>Data preview (first rows)</h3>
+        <table>
+          <tr>
+            {% for col in preview.preview_columns %}
+              <th>{{ col }}</th>
+            {% endfor %}
+          </tr>
+          {% for row in preview.preview_rows %}
+          <tr>
+            {% for col in preview.preview_columns %}
+              <td>{{ row[col] }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </table>
+      {% else %}
+        <p>No preview available.</p>
+      {% endif %}
+
+      {% if summary %}
+        <h2>Analysis summary</h2>
+        <p>
+          threshold={{ summary.thresholds }},
+          min episode={{ summary.min_episode_minutes }} min,
+          start date={{ summary.start_date }},
+          bin={{ summary.bin_minutes }} min
+        </p>
+        <table>
+          <tr>
+            <th>animal #</th>
+            <th>cage</th>
+            <th>label</th>
+            <th>period</th>
+            <th>episodes</th>
+            <th>wake min</th>
+            <th>avg episode length</th>
+          </tr>
+          {% for row in summary.summary %}
+          <tr>
+            <td>{{ row.animal_id }}</td>
+            <td>{{ row.cage_code }}</td>
+            <td>{{ row.animal_label }}</td>
+            <td>{{ row.period }}</td>
+            <td>{{ row.total_wake_episodes }}</td>
+            <td>{{ row.total_wake_minutes }}</td>
+            <td>{{ row.avg_episode_length }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+        <p>
+          <a class="button" href="{{ url_for('download', job_id=job_id) }}">Download wake_episodes.xlsx</a>
+        </p>
+      {% endif %}
+    </div>
+
+    {% if preview %}
+    <div class="controls">
+      <h2>Parameters</h2>
+      <form action="{{ url_for('analyze', job_id=job_id) }}" method="post">
+        <label>Activity threshold
+          <input type="number" name="threshold" value="100" step="any" required>
+        </label>
+        <label>Min episode length (minutes)
+          <input type="number" name="min_episode_minutes" value="10" step="any" min="0" required>
+        </label>
+        <label>Start date
+          <input type="date" name="start_date" value="{{ preview.suggested_start_date }}" required>
+        </label>
+
+        <h3>Animal labels</h3>
+        {% for a in preview.animal_meta %}
+          <label>Animal {{ a.animal_id }} ({{ a.cage_code or "no cage" }})
+            <input type="text" name="label_{{ a.animal_id }}" value="{{ a.animal_label }}">
+          </label>
+        {% endfor %}
+
+        <button class="confirm" type="submit">Confirm and run analysis</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+</body>
+</html>
