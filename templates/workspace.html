@@ -141,6 +141,7 @@
     <div class="controls">
       <h2>Parameters</h2>
       <form action="{{ url_for('analyze', job_id=job_id) }}" method="post">
+        <input type="hidden" name="preprocessed_b64" value="{{ preprocessed_b64|default('') }}">
         <label>Activity threshold
           <input type="number" name="threshold" value="100" step="any" required>
         </label>
@@ -154,7 +155,7 @@
         <h3>Animal labels</h3>
         {% for a in preview.animal_meta %}
           <label>Animal {{ a.animal_id }} ({{ a.cage_code or "no cage" }})
-            <input type="text" name="label_{{ a.animal_id }}" value="{{ a.animal_label }}">
+            <input type="text" name="label_{{ a.animal_id }}" value="{{ a.animal_label or '' }}">
           </label>
         {% endfor %}
 
