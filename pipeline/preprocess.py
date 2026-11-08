@@ -177,19 +177,118 @@ def col_to_letter(n: int) -> str:
     return s
 
 
+_AMPM_TIME_RE = re.compile(
+    r"^\s*\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _open_workbook(source: FileInput):
+    if isinstance(source, (bytes, bytearray)):
+        from io import BytesIO
+
+        return load_workbook(BytesIO(source), data_only=True, read_only=True)
+    if hasattr(source, "read"):
+        return load_workbook(cast(BinaryIO, source), data_only=True, read_only=True)
+    return load_workbook(str(source), data_only=True, read_only=True)
+
+
+def list_sheet_names(source: FileInput) -> List[str]:
+    """Return workbook sheet names in order."""
+    wb = _open_workbook(source)
+    try:
+        return list(wb.sheetnames)
+    finally:
+        wb.close()
+
+
+def _looks_like_ampm_time(x: Any) -> bool:
+    s = cell_chr(x)
+    return bool(s and _AMPM_TIME_RE.match(s))
+
+
+def _score_column_b_times(rows: List[List[Any]], col_time: int = 1, max_scan: int = 80) -> Dict[str, Any]:
+    """
+    Score a sheet by how much column B looks like a time series.
+
+    Prefers AM/PM clock strings (e.g. 7:05 PM), but also counts Excel
+    serials / datetime.time values used by many locomotor exports.
+    """
+    ampm = 0
+    other_time = 0
+    has_cage = False
+    sample_times: List[str] = []
+
+    limit = min(len(rows), max_scan)
+    for r in range(limit):
+        row = rows[r]
+        if len(row) <= col_time:
+            continue
+        val = row[col_time]
+        s = cell_chr(val)
+        if s is not None and s.lower() == "cage":
+            has_cage = True
+        if _looks_like_ampm_time(val):
+            ampm += 1
+            if len(sample_times) < 3:
+                sample_times.append(cast(str, s))
+            continue
+        sec = to_sec_of_day(val)
+        if sec is not None and not is_summary_label(s):
+            other_time += 1
+            if len(sample_times) < 3:
+                sample_times.append(fmt_clock(sec))
+
+    # Weight AM/PM higher because that is the user-described format.
+    score = ampm * 3 + other_time + (20 if has_cage else 0)
+    return {
+        "ampm_time_hits": ampm,
+        "other_time_hits": other_time,
+        "has_cage_label": has_cage,
+        "score": score,
+        "likely_locomotor": score >= 5 or (has_cage and (ampm + other_time) >= 2),
+        "sample_times": sample_times,
+    }
+
+
+def inspect_workbook_sheets(source: FileInput) -> List[Dict[str, Any]]:
+    """
+    Scan every sheet and report which ones look analyzable.
+
+    Looks primarily at column B for XX:XX AM/PM times (also accepts
+    Excel time serials / clock values).
+    """
+    wb = _open_workbook(source)
+    try:
+        results: List[Dict[str, Any]] = []
+        for idx, name in enumerate(wb.sheetnames):
+            ws = wb[name]
+            rows: List[List[Any]] = []
+            for i, row in enumerate(ws.iter_rows(values_only=True)):
+                rows.append(list(row))
+                if i >= 79:
+                    break
+            score_info = _score_column_b_times(rows)
+            results.append(
+                {
+                    "index": idx,
+                    "name": name,
+                    **score_info,
+                }
+            )
+        # Stable sort: likely first, then higher score, then original order
+        results.sort(key=lambda s: (-int(s["likely_locomotor"]), -s["score"], s["index"]))
+        return results
+    finally:
+        wb.close()
+
+
 def _load_sheet_matrix(
     source: FileInput,
     sheet: Union[int, str] = 0,
 ) -> List[List[Any]]:
     """Load worksheet as a 0-indexed matrix of cell values (no header assumption)."""
-    if isinstance(source, (bytes, bytearray)):
-        from io import BytesIO
-
-        wb = load_workbook(BytesIO(source), data_only=True, read_only=True)
-    elif hasattr(source, "read"):
-        wb = load_workbook(cast(BinaryIO, source), data_only=True, read_only=True)
-    else:
-        wb = load_workbook(str(source), data_only=True, read_only=True)
+    wb = _open_workbook(source)
 
     if isinstance(sheet, int):
         ws = wb.worksheets[sheet]
@@ -351,8 +450,10 @@ def preprocess_locomotor(
     preview_df = pd.DataFrame({"time": [fmt_clock(s) for s in keep_secs[:preview_n]]})
     preview_df = pd.concat([preview_df, counts_df.iloc[:preview_n].reset_index(drop=True)], axis=1)
 
+    sheet_label: Any = sheet
     return {
         "input_xlsx": input_name,
+        "sheet": sheet_label,
         "animal_meta": animal_meta_dicts,
         "keep_secs": keep_secs,
         "counts": {k: list(v) for k, v in counts.items()},
@@ -373,6 +474,7 @@ def build_preview_payload(pre: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "status": "ok",
         "input_file": pre["input_xlsx"],
+        "sheet": pre.get("sheet"),
         "bin_minutes": pre["bin_minutes"],
         "suggested_start_date": pre["suggested_start_date"],
         "n_bins": pre["n_bins"],

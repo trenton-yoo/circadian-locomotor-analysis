@@ -346,6 +346,59 @@ def analyze_locomotor(
             }
         )
 
+    episode_records = []
+    if not episodes_all.empty:
+        for _, row in episodes_all.iterrows():
+            episode_records.append(
+                {
+                    "animal_id": int(row["animal_id"]),
+                    "cage_code": "" if pd.isna(row["cage_code"]) else str(row["cage_code"]),
+                    "animal_label": ""
+                    if pd.isna(row["animal_label"])
+                    else str(row["animal_label"]),
+                    "period": row["period"],
+                    "threshold": float(row["threshold"]),
+                    "episode_id": int(row["episode_id"]),
+                    "start_time": pd.Timestamp(row["start_time"]).isoformat(sep=" "),
+                    "end_time": pd.Timestamp(row["end_time"]).isoformat(sep=" "),
+                    "duration_bins": int(row["duration_bins"]),
+                    "duration_minutes": float(row["duration_minutes"]),
+                    "total_counts": float(row["total_counts"]),
+                }
+            )
+
+    # Separate workbooks for UI downloads
+    summary_buf = BytesIO()
+    with pd.ExcelWriter(summary_buf, engine="xlsxwriter") as writer:
+        meta_out.to_excel(writer, sheet_name="animal_metadata", index=False)
+        episodes_summary.to_excel(writer, sheet_name="summary", index=False)
+        overall_mean_lengths.to_excel(writer, sheet_name="overall_means", index=False)
+    summary_xlsx_bytes = summary_buf.getvalue()
+
+    episodes_buf = BytesIO()
+    with pd.ExcelWriter(episodes_buf, engine="xlsxwriter") as writer:
+        (
+            episodes_all
+            if not episodes_all.empty
+            else pd.DataFrame(
+                columns=[
+                    "animal",
+                    "animal_id",
+                    "cage_code",
+                    "animal_label",
+                    "period",
+                    "start_time",
+                    "end_time",
+                    "duration_bins",
+                    "duration_minutes",
+                    "total_counts",
+                    "threshold",
+                    "episode_id",
+                ]
+            )
+        ).to_excel(writer, sheet_name="episodes", index=False)
+    episodes_xlsx_bytes = episodes_buf.getvalue()
+
     return {
         "final_full": final_full,
         "df_long": df_long,
@@ -355,6 +408,8 @@ def analyze_locomotor(
         "animal_meta": meta,
         "output_xlsx": str(output_xlsx) if output_xlsx else None,
         "xlsx_bytes": xlsx_bytes,
+        "summary_xlsx_bytes": summary_xlsx_bytes,
+        "episodes_xlsx_bytes": episodes_xlsx_bytes,
         "thresholds": thresh_list,
         "min_episode_minutes": min_episode_minutes,
         "bin_minutes": bin_minutes,
@@ -362,16 +417,18 @@ def analyze_locomotor(
         "n_episodes_before_filter": n_before,
         "n_episodes_after_filter": n_after,
         "summary_records": summary_records,
+        "episode_records": episode_records,
     }
 
 
 def build_summary_payload(result: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "status": "ok",
-        "output_file": "wake_episodes.xlsx",
         "bin_minutes": result["bin_minutes"],
         "thresholds": result["thresholds"],
         "min_episode_minutes": result["min_episode_minutes"],
         "start_date": result["start_date"],
+        "n_episodes": result["n_episodes_after_filter"],
         "summary": result["summary_records"],
+        "episodes": result["episode_records"],
     }

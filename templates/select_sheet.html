@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Choose sheet — {{ job_id }}</title>
+  <style>
+    body { font-family: Georgia, serif; margin: 2rem; max-width: 900px; line-height: 1.4; }
+    h1, h2 { font-weight: normal; }
+    .muted { color: #555; }
+    .error { color: #8b0000; border: 1px solid #8b0000; padding: 0.5rem; margin: 1rem 0; white-space: pre-wrap; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th, td { border: 1px solid #999; padding: 0.35rem 0.5rem; text-align: left; }
+    th { background: #eee; }
+    tr.likely { background: #f3f8f0; }
+    button {
+      margin-top: 1rem;
+      padding: 0.45rem 0.9rem;
+      font: inherit;
+      cursor: pointer;
+      border: 1px solid #333;
+      background: #f0f0f0;
+    }
+    .confirm { font-weight: bold; }
+    a.top { font-family: Georgia, serif; }
+    label.row-label { display: block; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <p><a class="top" href="{{ url_for('index') }}">← New upload</a></p>
+  <h1>Choose a sheet</h1>
+  <p class="muted">File: {{ input_file }} · Job {{ job_id }}</p>
+  <p>
+    This workbook has multiple sheets. Pick the sheet to analyze.
+    Sheets marked <strong>likely</strong> have time-like values in column B
+    (e.g. <code>7:05 PM</code>) and/or a <code>cage</code> label.
+  </p>
+
+  {% if error %}
+    <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <form action="{{ url_for('select_sheet', job_id=job_id) }}" method="post">
+    <table>
+      <tr>
+        <th></th>
+        <th>Sheet</th>
+        <th>Likely?</th>
+        <th>AM/PM times in col B</th>
+        <th>Other times in col B</th>
+        <th>Has "cage"</th>
+        <th>Sample times</th>
+      </tr>
+      {% for s in sheets %}
+      <tr class="{{ 'likely' if s.likely_locomotor else '' }}">
+        <td>
+          <label class="row-label">
+            <input
+              type="radio"
+              name="sheet_name"
+              value="{{ s.name }}"
+              {% if loop.first %}checked{% endif %}
+              required
+            >
+          </label>
+        </td>
+        <td>{{ s.name }}</td>
+        <td>{{ "yes" if s.likely_locomotor else "no" }}</td>
+        <td>{{ s.ampm_time_hits }}</td>
+        <td>{{ s.other_time_hits }}</td>
+        <td>{{ "yes" if s.has_cage_label else "no" }}</td>
+        <td>{{ s.sample_times | join(", ") }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <button class="confirm" type="submit">Use selected sheet</button>
+  </form>
+</body>
+</html>

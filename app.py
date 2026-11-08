@@ -19,7 +19,7 @@ import tempfile
 import traceback
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from flask import (
     Flask,
@@ -32,7 +32,12 @@ from flask import (
 )
 
 from pipeline.analyze import analyze_locomotor, build_summary_payload
-from pipeline.preprocess import build_preview_payload, preprocess_locomotor
+from pipeline.plots import animal_options_from_results, build_relative_frequency_histograms
+from pipeline.preprocess import (
+    build_preview_payload,
+    inspect_workbook_sheets,
+    preprocess_locomotor,
+)
 
 ROOT = Path(__file__).resolve().parent
 
@@ -67,6 +72,7 @@ def encode_preprocessed(pre: Dict[str, Any]) -> str:
     """Gzip + base64 so confirm/analyze can restore state without sticky disk."""
     slim = {
         "input_xlsx": pre["input_xlsx"],
+        "sheet": pre.get("sheet"),
         "animal_meta": pre["animal_meta"],
         "keep_secs": pre["keep_secs"],
         "counts": pre["counts"],
@@ -106,6 +112,27 @@ def index():
     return render_template("index.html")
 
 
+def _run_preprocess_for_job(
+    job_id: str,
+    file_bytes: bytes,
+    filename: str,
+    sheet: Any,
+) -> None:
+    """Preprocess one sheet and write preview artifacts into the job folder."""
+    jdir = job_path(job_id)
+    pre = preprocess_locomotor(
+        file_bytes,
+        sheet=sheet,
+        bin_minutes=None,
+        input_name=filename,
+    )
+    preview = build_preview_payload(pre)
+    save_json(jdir / "preprocessed.json", pre)
+    save_json(jdir / "preview.json", preview)
+    token = encode_preprocessed(pre)
+    (jdir / "preprocessed.b64.txt").write_text(token, encoding="utf-8")
+
+
 @app.route("/upload", methods=["POST"])
 def upload():
     ensure_dirs()
@@ -130,42 +157,191 @@ def upload():
             job_id=job_id,
             error="Uploaded file was empty.",
             preview=None,
-            summary=None,
+            results=None,
+            phase="preview",
+            view="summary",
             preprocessed_b64="",
         )
 
-    # Keep a copy for debugging locally; not required for analyze (state is embedded).
     (jdir / "input.xlsx").write_bytes(file_bytes)
+    save_json(jdir / "meta.json", {"input_file": filename})
 
     try:
-        pre = preprocess_locomotor(
-            file_bytes,
-            sheet=0,
-            bin_minutes=None,
-            input_name=filename,
-        )
-        preview = build_preview_payload(pre)
-        save_json(jdir / "preprocessed.json", pre)
-        save_json(jdir / "preview.json", preview)
-        token = encode_preprocessed(pre)
-        (jdir / "preprocessed.b64.txt").write_text(token, encoding="utf-8")
-    except Exception as exc:  # noqa: BLE001 — surface to workspace
+        sheets = inspect_workbook_sheets(file_bytes)
+        save_json(jdir / "sheets.json", {"sheets": sheets, "input_file": filename})
+    except Exception as exc:  # noqa: BLE001
         message = f"{type(exc).__name__}: {exc}"
-        if os.environ.get("FLASK_DEBUG") or os.environ.get("VERCEL_ENV") == "development":
-            message = message + "\n\n" + traceback.format_exc()
         return render_template(
             "workspace.html",
             job_id=job_id,
             error=message,
             preview=None,
-            summary=None,
+            results=None,
+            phase="preview",
+            view="summary",
             preprocessed_b64="",
+        )
+
+    # One sheet → preprocess immediately. Multiple → let user choose.
+    if len(sheets) <= 1:
+        sheet_ref: Any = sheets[0]["name"] if sheets else 0
+        try:
+            _run_preprocess_for_job(job_id, file_bytes, filename, sheet_ref)
+        except Exception as exc:  # noqa: BLE001
+            message = f"{type(exc).__name__}: {exc}"
+            if os.environ.get("FLASK_DEBUG") or os.environ.get("VERCEL_ENV") == "development":
+                message = message + "\n\n" + traceback.format_exc()
+            return render_template(
+                "workspace.html",
+                job_id=job_id,
+                error=message,
+                preview=None,
+                results=None,
+                phase="preview",
+                view="summary",
+                preprocessed_b64="",
+            )
+        return redirect(url_for("workspace", job_id=job_id))
+
+    return redirect(url_for("select_sheet", job_id=job_id))
+
+
+@app.route("/job/<job_id>/select-sheet", methods=["GET", "POST"])
+def select_sheet(job_id: str):
+    ensure_dirs()
+    jdir = job_path(job_id)
+    input_path = jdir / "input.xlsx"
+    sheets_path = jdir / "sheets.json"
+
+    if not input_path.exists():
+        flash("Upload not found or expired. Please upload again.")
+        return redirect(url_for("index"))
+
+    sheets_info = load_json(sheets_path) if sheets_path.exists() else {}
+    sheets = sheets_info.get("sheets") or inspect_workbook_sheets(input_path.read_bytes())
+    filename = sheets_info.get("input_file") or (load_json(jdir / "meta.json").get("input_file") if (jdir / "meta.json").exists() else "upload.xlsx")
+
+    if request.method == "GET":
+        return render_template(
+            "select_sheet.html",
+            job_id=job_id,
+            input_file=filename,
+            sheets=sheets,
+            error=None,
+        )
+
+    sheet_name = request.form.get("sheet_name", "").strip()
+    if not sheet_name:
+        return render_template(
+            "select_sheet.html",
+            job_id=job_id,
+            input_file=filename,
+            sheets=sheets,
+            error="Please choose a sheet.",
+        )
+
+    try:
+        file_bytes = input_path.read_bytes()
+        _run_preprocess_for_job(job_id, file_bytes, filename, sheet_name)
+    except Exception as exc:  # noqa: BLE001
+        message = f"{type(exc).__name__}: {exc}"
+        return render_template(
+            "select_sheet.html",
+            job_id=job_id,
+            input_file=filename,
+            sheets=sheets,
+            error=message,
         )
 
     return redirect(url_for("workspace", job_id=job_id))
 
 
-@app.route("/job/<job_id>", methods=["GET"])
+def _histogram_context_from_request(results: Dict[str, Any]) -> Dict[str, Any]:
+    """Build histogram plot + form defaults from GET query or POST form."""
+    src = request.form if request.method == "POST" else request.args
+    animals = animal_options_from_results(results)
+    lookup = {
+        int(a["animal_id"]): (a.get("animal_label") or "")
+        for a in animals
+    }
+
+    period1 = src.get("period1", "All")
+    if period1 not in {"Day", "Night", "All"}:
+        period1 = "All"
+    show_mean1 = src.get("show_mean1") in {"1", "on", "true", "True"}
+    show_second = src.get("show_second") in {"1", "on", "true", "True"}
+
+    # Animal checkboxes use animal1_<id> / animal2_<id>
+    ids1 = []
+    ids2 = []
+    for key in src:
+        if key.startswith("animal1_"):
+            try:
+                ids1.append(int(key.split("_", 1)[1]))
+            except ValueError:
+                pass
+        elif key.startswith("animal2_"):
+            try:
+                ids2.append(int(key.split("_", 1)[1]))
+            except ValueError:
+                pass
+
+    # Default: all animals selected when first opening the tab (no animal params).
+    has_animal_params = any(k.startswith("animal1_") for k in src)
+    if not has_animal_params:
+        ids1 = [int(a["animal_id"]) for a in animals]
+
+    period2 = src.get("period2", "All")
+    if period2 not in {"Day", "Night", "All"}:
+        period2 = "All"
+    show_mean2 = src.get("show_mean2") in {"1", "on", "true", "True"}
+
+    panels = [
+        {
+            "animal_ids": ids1 or None,
+            "period": period1,
+            "show_mean": show_mean1,
+        }
+    ]
+    if show_second:
+        panels.append(
+            {
+                "animal_ids": ids2 or None,
+                "period": period2,
+                "show_mean": show_mean2,
+            }
+        )
+
+    bin_minutes = results.get("bin_minutes")
+    try:
+        plot_b64, panel_stats = build_relative_frequency_histograms(
+            results.get("episodes") or [],
+            panels=panels,
+            bin_minutes=bin_minutes,
+            animal_lookup=lookup,
+        )
+        hist_error = None
+    except Exception as exc:  # noqa: BLE001
+        plot_b64 = None
+        panel_stats = []
+        hist_error = f"{type(exc).__name__}: {exc}"
+
+    return {
+        "animals": animals,
+        "selected1": set(ids1),
+        "selected2": set(ids2),
+        "period1": period1,
+        "period2": period2,
+        "show_mean1": show_mean1,
+        "show_mean2": show_mean2,
+        "show_second": show_second,
+        "plot_b64": plot_b64,
+        "panel_stats": panel_stats,
+        "hist_error": hist_error,
+    }
+
+
+@app.route("/job/<job_id>", methods=["GET", "POST"])
 def workspace(job_id: str):
     jdir = job_path(job_id)
     preview_path = jdir / "preview.json"
@@ -174,8 +350,15 @@ def workspace(job_id: str):
     preview = load_json(preview_path) if preview_path.exists() else None
     token = token_path.read_text(encoding="utf-8") if token_path.exists() else ""
 
-    summary_path = jdir / "summary.json"
-    summary = load_json(summary_path) if summary_path.exists() else None
+    # Phase is URL-only (not persisted). Default = preview. Analysis view
+    # only when explicitly requested after a successful run.
+    phase = request.values.get("phase", "preview")
+    view = request.values.get("view", "summary")
+    if view not in {"summary", "episodes", "histogram"}:
+        view = "summary"
+
+    results_path = jdir / "results.json"
+    results = load_json(results_path) if results_path.exists() else None
 
     error = None
     if preview is None:
@@ -184,19 +367,27 @@ def workspace(job_id: str):
         error = preview.get("message", "Preprocess error")
         preview = None
 
-    if summary and summary.get("status") == "error":
-        error = summary.get("message", "Analyze error")
-        summary = None
-    elif summary and summary.get("status") != "ok":
-        summary = None
+    hist = None
+    if phase == "analysis":
+        if results is None or results.get("status") != "ok":
+            # No saved analysis UI state required — send user back to preview.
+            return redirect(url_for("workspace", job_id=job_id))
+        if view == "histogram":
+            hist = _histogram_context_from_request(results)
+    else:
+        phase = "preview"
+        results = None
 
     return render_template(
         "workspace.html",
         job_id=job_id,
         preview=preview,
-        summary=summary,
+        results=results,
+        phase=phase,
+        view=view,
         error=error,
         preprocessed_b64=token,
+        hist=hist,
     )
 
 
@@ -221,7 +412,9 @@ def analyze(job_id: str):
             job_id=job_id,
             error=str(exc),
             preview=None,
-            summary=None,
+            results=None,
+            phase="preview",
+            view="summary",
             preprocessed_b64=form_token,
         )
 
@@ -235,7 +428,9 @@ def analyze(job_id: str):
             job_id=job_id,
             error="Threshold and minimum episode length must be numbers.",
             preview=preview,
-            summary=None,
+            results=None,
+            phase="preview",
+            view="summary",
             preprocessed_b64=form_token or encode_preprocessed(pre),
         )
 
@@ -261,12 +456,14 @@ def analyze(job_id: str):
             thresholds=threshold,
             min_episode_minutes=min_episode_minutes,
             bin_minutes=pre["bin_minutes"],
-            output_xlsx=jdir / "wake_episodes.xlsx",
         )
-        summary = build_summary_payload(result)
-        save_json(jdir / "summary.json", summary)
-        if result.get("xlsx_bytes"):
-            (jdir / "wake_episodes.xlsx").write_bytes(result["xlsx_bytes"])
+        payload = build_summary_payload(result)
+        # Temporary artifacts for this browser session/view only (not a saved "phase").
+        save_json(jdir / "results.json", payload)
+        if result.get("summary_xlsx_bytes"):
+            (jdir / "analysis_summary.xlsx").write_bytes(result["summary_xlsx_bytes"])
+        if result.get("episodes_xlsx_bytes"):
+            (jdir / "all_episodes.xlsx").write_bytes(result["episodes_xlsx_bytes"])
     except Exception as exc:  # noqa: BLE001
         message = f"{type(exc).__name__}: {exc}"
         return render_template(
@@ -274,23 +471,50 @@ def analyze(job_id: str):
             job_id=job_id,
             error=message,
             preview=preview,
-            summary=None,
+            results=None,
+            phase="preview",
+            view="summary",
             preprocessed_b64=form_token or encode_preprocessed(pre),
         )
 
+    return redirect(url_for("workspace", job_id=job_id, phase="analysis", view="summary"))
+
+
+@app.route("/job/<job_id>/back", methods=["GET", "POST"])
+def back_to_preview(job_id: str):
+    """Return to phase 1 and discard phase-2 analysis artifacts."""
+    jdir = job_path(job_id)
+    for name in ("results.json", "analysis_summary.xlsx", "all_episodes.xlsx", "summary.json"):
+        path = jdir / name
+        if path.exists():
+            path.unlink()
     return redirect(url_for("workspace", job_id=job_id))
 
 
-@app.route("/job/<job_id>/download", methods=["GET"])
-def download(job_id: str):
-    path = job_path(job_id) / "wake_episodes.xlsx"
+@app.route("/job/<job_id>/download/summary", methods=["GET"])
+def download_summary(job_id: str):
+    path = job_path(job_id) / "analysis_summary.xlsx"
     if not path.exists():
-        flash("Output file not found. Run analysis first.")
+        flash("Summary file not found. Run analysis first.")
         return redirect(url_for("workspace", job_id=job_id))
     return send_file(
         path,
         as_attachment=True,
-        download_name=f"wake_episodes_{job_id}.xlsx",
+        download_name=f"analysis_summary_{job_id}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@app.route("/job/<job_id>/download/episodes", methods=["GET"])
+def download_episodes(job_id: str):
+    path = job_path(job_id) / "all_episodes.xlsx"
+    if not path.exists():
+        flash("Episodes file not found. Run analysis first.")
+        return redirect(url_for("workspace", job_id=job_id))
+    return send_file(
+        path,
+        as_attachment=True,
+        download_name=f"all_episodes_{job_id}.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 

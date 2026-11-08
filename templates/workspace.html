@@ -18,22 +18,33 @@
       font-size: 12.5px;
     }
     .controls {
-      flex: 0 0 260px;
+      flex: 0 0 280px;
       border: 1px solid #333;
       padding: 0.75rem 1rem;
       background: #fff;
     }
     label { display: block; margin-top: 0.75rem; font-family: Georgia, serif; font-size: 0.95rem; }
+    label.inline { display: inline; margin-top: 0; margin-right: 0.75rem; }
+    label.check { margin-top: 0.25rem; font-size: 0.9rem; }
+    fieldset {
+      border: 1px solid #ccc;
+      margin: 0.75rem 0;
+      padding: 0.5rem 0.75rem 0.75rem;
+      font-family: Georgia, serif;
+    }
+    legend { padding: 0 0.25rem; }
     input[type="number"], input[type="date"], input[type="text"] {
       width: 100%; box-sizing: border-box; margin-top: 0.2rem; padding: 0.25rem;
     }
+    .animal-list { max-height: 140px; overflow: auto; border: 1px solid #ddd; padding: 0.35rem; margin-top: 0.35rem; }
     table { border-collapse: collapse; width: 100%; margin: 0.5rem 0 1rem; }
     th, td { border: 1px solid #999; padding: 0.2rem 0.35rem; text-align: left; white-space: nowrap; }
     th { background: #eaeaea; }
     .error { color: #8b0000; border: 1px solid #8b0000; padding: 0.5rem; margin-bottom: 1rem; white-space: pre-wrap; }
     button, .button {
       display: inline-block;
-      margin-top: 1rem;
+      margin-top: 0.6rem;
+      margin-right: 0.4rem;
       padding: 0.45rem 0.9rem;
       font: inherit;
       cursor: pointer;
@@ -42,15 +53,27 @@
       border: 1px solid #333;
       background: #f0f0f0;
     }
-    .confirm { font-weight: bold; width: 100%; }
+    .confirm { font-weight: bold; width: 100%; margin-top: 1rem; }
     .muted { color: #555; font-family: Georgia, serif; }
     a.top { font-family: Georgia, serif; }
+    .tabs { margin: 0.75rem 0 0.25rem; font-family: Georgia, serif; }
+    .tabs a {
+      margin-right: 0.75rem;
+      text-decoration: none;
+      color: #333;
+      border-bottom: 2px solid transparent;
+      padding-bottom: 0.1rem;
+    }
+    .tabs a.active { border-bottom-color: #333; font-weight: bold; }
+    .phase-bar { margin-bottom: 0.75rem; font-family: Georgia, serif; }
+    .hist-img { max-width: 100%; height: auto; border: 1px solid #ccc; background: #fff; margin-top: 0.75rem; }
+    .stats { font-family: Georgia, serif; font-size: 0.95rem; margin-top: 0.5rem; }
   </style>
 </head>
 <body>
   <p><a class="top" href="{{ url_for('index') }}">← New upload</a></p>
   <h1>Workspace</h1>
-  <p class="muted">Job {{ job_id }}</p>
+  <p class="muted">Job {{ job_id }} · {% if phase == 'analysis' %}Phase 2: analysis{% else %}Phase 1: preview &amp; parameters{% endif %}</p>
 
   {% if error %}
     <div class="error">{{ error }}</div>
@@ -58,8 +81,120 @@
 
   <div class="row">
     <div class="workspace">
-      {% if preview %}
-        <h2>File: {{ preview.input_file }}</h2>
+      {% if phase == 'analysis' and results %}
+        <div class="phase-bar">
+          <a class="button" href="{{ url_for('back_to_preview', job_id=job_id) }}">← Back to data preview</a>
+        </div>
+
+        <h2>Analysis</h2>
+        <p>
+          threshold={{ results.thresholds }},
+          min episode={{ results.min_episode_minutes }} min,
+          start date={{ results.start_date }},
+          bin={{ results.bin_minutes }} min,
+          episodes={{ results.n_episodes }}
+        </p>
+
+        <div class="tabs">
+          <a
+            class="{{ 'active' if view == 'summary' else '' }}"
+            href="{{ url_for('workspace', job_id=job_id, phase='analysis', view='summary') }}"
+          >Analysis summary</a>
+          <a
+            class="{{ 'active' if view == 'episodes' else '' }}"
+            href="{{ url_for('workspace', job_id=job_id, phase='analysis', view='episodes') }}"
+          >All episodes</a>
+          <a
+            class="{{ 'active' if view == 'histogram' else '' }}"
+            href="{{ url_for('workspace', job_id=job_id, phase='analysis', view='histogram') }}"
+          >Relative frequency</a>
+        </div>
+
+        {% if view == 'episodes' %}
+          <h3>All episodes</h3>
+          <table>
+            <tr>
+              <th>animal #</th>
+              <th>cage</th>
+              <th>label</th>
+              <th>period</th>
+              <th>ep #</th>
+              <th>start</th>
+              <th>end</th>
+              <th>duration (min)</th>
+              <th>total counts</th>
+            </tr>
+            {% for row in results.episodes %}
+            <tr>
+              <td>{{ row.animal_id }}</td>
+              <td>{{ row.cage_code }}</td>
+              <td>{{ row.animal_label }}</td>
+              <td>{{ row.period }}</td>
+              <td>{{ row.episode_id }}</td>
+              <td>{{ row.start_time }}</td>
+              <td>{{ row.end_time }}</td>
+              <td>{{ row.duration_minutes }}</td>
+              <td>{{ row.total_counts }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="9">No episodes after filters.</td></tr>
+            {% endfor %}
+          </table>
+          <p>
+            <a class="button" href="{{ url_for('download_episodes', job_id=job_id) }}">Download all_episodes.xlsx</a>
+          </p>
+
+        {% elif view == 'histogram' and hist %}
+          <h3>Relative frequency of episode length</h3>
+          {% if hist.hist_error %}
+            <div class="error">{{ hist.hist_error }}</div>
+          {% endif %}
+          {% if hist.plot_b64 %}
+            <img class="hist-img" alt="Relative frequency histogram" src="data:image/png;base64,{{ hist.plot_b64 }}">
+          {% endif %}
+          {% if hist.panel_stats %}
+            <div class="stats">
+              {% for s in hist.panel_stats %}
+                <div>
+                  Panel {{ s.index }}: n={{ s.n }}
+                  {% if s.mean is not none %}· mean={{ s.mean }} min{% endif %}
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+        {% else %}
+          <h3>Analysis summary</h3>
+          <table>
+            <tr>
+              <th>animal #</th>
+              <th>cage</th>
+              <th>label</th>
+              <th>period</th>
+              <th>episodes</th>
+              <th>wake min</th>
+              <th>avg episode length</th>
+            </tr>
+            {% for row in results.summary %}
+            <tr>
+              <td>{{ row.animal_id }}</td>
+              <td>{{ row.cage_code }}</td>
+              <td>{{ row.animal_label }}</td>
+              <td>{{ row.period }}</td>
+              <td>{{ row.total_wake_episodes }}</td>
+              <td>{{ row.total_wake_minutes }}</td>
+              <td>{{ row.avg_episode_length }}</td>
+            </tr>
+            {% endfor %}
+          </table>
+          <p>
+            <a class="button" href="{{ url_for('download_summary', job_id=job_id) }}">Download analysis_summary.xlsx</a>
+            <a class="button" href="{{ url_for('download_episodes', job_id=job_id) }}">Download all_episodes.xlsx</a>
+          </p>
+        {% endif %}
+
+      {% elif preview %}
+        <h2>File: {{ preview.input_file }}{% if preview.sheet %} · sheet: {{ preview.sheet }}{% endif %}</h2>
         <p>
           bins={{ preview.n_bins }},
           bin_size={{ preview.bin_minutes }} min,
@@ -100,44 +235,79 @@
       {% else %}
         <p>No preview available.</p>
       {% endif %}
-
-      {% if summary %}
-        <h2>Analysis summary</h2>
-        <p>
-          threshold={{ summary.thresholds }},
-          min episode={{ summary.min_episode_minutes }} min,
-          start date={{ summary.start_date }},
-          bin={{ summary.bin_minutes }} min
-        </p>
-        <table>
-          <tr>
-            <th>animal #</th>
-            <th>cage</th>
-            <th>label</th>
-            <th>period</th>
-            <th>episodes</th>
-            <th>wake min</th>
-            <th>avg episode length</th>
-          </tr>
-          {% for row in summary.summary %}
-          <tr>
-            <td>{{ row.animal_id }}</td>
-            <td>{{ row.cage_code }}</td>
-            <td>{{ row.animal_label }}</td>
-            <td>{{ row.period }}</td>
-            <td>{{ row.total_wake_episodes }}</td>
-            <td>{{ row.total_wake_minutes }}</td>
-            <td>{{ row.avg_episode_length }}</td>
-          </tr>
-          {% endfor %}
-        </table>
-        <p>
-          <a class="button" href="{{ url_for('download', job_id=job_id) }}">Download wake_episodes.xlsx</a>
-        </p>
-      {% endif %}
     </div>
 
-    {% if preview %}
+    {% if phase == 'analysis' and view == 'histogram' and hist %}
+    <div class="controls">
+      <h2>Histogram options</h2>
+      <form action="{{ url_for('workspace', job_id=job_id) }}" method="post">
+        <input type="hidden" name="phase" value="analysis">
+        <input type="hidden" name="view" value="histogram">
+
+        <fieldset>
+          <legend>Panel 1</legend>
+          <div>Animals</div>
+          <div class="animal-list">
+            {% for a in hist.animals %}
+              <label class="check">
+                <input type="checkbox" name="animal1_{{ a.animal_id }}"
+                  {% if a.animal_id in hist.selected1 %}checked{% endif %}>
+                {{ a.animal_id }}{% if a.animal_label %} · {{ a.animal_label }}{% endif %}
+              </label>
+            {% endfor %}
+          </div>
+          <div style="margin-top:0.5rem;">Period</div>
+          <label class="inline"><input type="radio" name="period1" value="All" {% if hist.period1 == 'All' %}checked{% endif %}> Entire</label>
+          <label class="inline"><input type="radio" name="period1" value="Day" {% if hist.period1 == 'Day' %}checked{% endif %}> Day</label>
+          <label class="inline"><input type="radio" name="period1" value="Night" {% if hist.period1 == 'Night' %}checked{% endif %}> Night</label>
+          <label class="check" style="margin-top:0.5rem;">
+            <input type="checkbox" name="show_mean1" {% if hist.show_mean1 %}checked{% endif %}>
+            Show mean episode length
+          </label>
+        </fieldset>
+
+        <label class="check">
+          <input type="checkbox" name="show_second" id="show_second" {% if hist.show_second %}checked{% endif %}>
+          Add second histogram below
+        </label>
+
+        <fieldset id="panel2" {% if not hist.show_second %}style="display:none"{% endif %}>
+          <legend>Panel 2</legend>
+          <div>Animals</div>
+          <div class="animal-list">
+            {% for a in hist.animals %}
+              <label class="check">
+                <input type="checkbox" name="animal2_{{ a.animal_id }}"
+                  {% if a.animal_id in hist.selected2 %}checked{% endif %}>
+                {{ a.animal_id }}{% if a.animal_label %} · {{ a.animal_label }}{% endif %}
+              </label>
+            {% endfor %}
+          </div>
+          <div style="margin-top:0.5rem;">Period</div>
+          <label class="inline"><input type="radio" name="period2" value="All" {% if hist.period2 == 'All' %}checked{% endif %}> Entire</label>
+          <label class="inline"><input type="radio" name="period2" value="Day" {% if hist.period2 == 'Day' %}checked{% endif %}> Day</label>
+          <label class="inline"><input type="radio" name="period2" value="Night" {% if hist.period2 == 'Night' %}checked{% endif %}> Night</label>
+          <label class="check" style="margin-top:0.5rem;">
+            <input type="checkbox" name="show_mean2" {% if hist.show_mean2 %}checked{% endif %}>
+            Show mean episode length
+          </label>
+        </fieldset>
+
+        <button class="confirm" type="submit">Update histogram</button>
+      </form>
+    </div>
+    <script>
+      (function () {
+        var box = document.getElementById('show_second');
+        var panel = document.getElementById('panel2');
+        if (!box || !panel) return;
+        box.addEventListener('change', function () {
+          panel.style.display = box.checked ? '' : 'none';
+        });
+      })();
+    </script>
+
+    {% elif phase != 'analysis' and preview %}
     <div class="controls">
       <h2>Parameters</h2>
       <form action="{{ url_for('analyze', job_id=job_id) }}" method="post">
