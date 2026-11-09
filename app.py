@@ -34,6 +34,7 @@ from flask import (
 from pipeline.analyze import analyze_locomotor, build_summary_payload
 from pipeline.plots import animal_options_from_results, build_relative_frequency_histograms
 from pipeline.preprocess import (
+    build_full_dataframe_table,
     build_preview_payload,
     inspect_workbook_sheets,
     preprocess_locomotor,
@@ -353,9 +354,7 @@ def workspace(job_id: str):
     # Phase is URL-only (not persisted). Default = preview. Analysis view
     # only when explicitly requested after a successful run.
     phase = request.values.get("phase", "preview")
-    view = request.values.get("view", "summary")
-    if view not in {"summary", "episodes", "histogram"}:
-        view = "summary"
+    view = request.values.get("view")
 
     results_path = jdir / "results.json"
     results = load_json(results_path) if results_path.exists() else None
@@ -368,7 +367,10 @@ def workspace(job_id: str):
         preview = None
 
     hist = None
+    full_df = None
     if phase == "analysis":
+        if view not in {"summary", "episodes", "histogram"}:
+            view = "summary"
         if results is None or results.get("status") != "ok":
             # No saved analysis UI state required — send user back to preview.
             return redirect(url_for("workspace", job_id=job_id))
@@ -377,6 +379,15 @@ def workspace(job_id: str):
     else:
         phase = "preview"
         results = None
+        if view not in {"preview", "full"}:
+            view = "preview"
+        if view == "full" and preview is not None:
+            try:
+                pre = load_preprocessed(job_id, form_token=token or None)
+                full_df = build_full_dataframe_table(pre)
+            except Exception as exc:  # noqa: BLE001 — surface in UI
+                error = f"Could not load full dataframe: {exc}"
+                view = "preview"
 
     return render_template(
         "workspace.html",
@@ -388,6 +399,7 @@ def workspace(job_id: str):
         error=error,
         preprocessed_b64=token,
         hist=hist,
+        full_df=full_df,
     )
 
 

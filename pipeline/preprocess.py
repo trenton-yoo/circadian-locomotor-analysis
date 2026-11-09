@@ -485,3 +485,16 @@ def build_preview_payload(pre: Dict[str, Any]) -> Dict[str, Any]:
         "preview_columns": pre["preview_columns"],
         "preview_rows": pre["preview_rows"],
     }
+
+
+def build_full_dataframe_table(pre: Dict[str, Any]) -> Dict[str, Any]:
+    """All timed count bins for the Phase 1 full-dataframe view."""
+    keep_secs = list(pre["keep_secs"])
+    counts_df = pd.DataFrame(pre["counts"])
+    full_df = pd.DataFrame({"time": [fmt_clock(s) for s in keep_secs]})
+    full_df = pd.concat([full_df, counts_df.reset_index(drop=True)], axis=1)
+    return {
+        "columns": list(full_df.columns),
+        "rows": full_df.where(pd.notnull(full_df), None).to_dict(orient="records"),
+        "n_rows": len(full_df),
+    }

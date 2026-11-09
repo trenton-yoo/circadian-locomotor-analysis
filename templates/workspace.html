@@ -202,36 +202,65 @@
           midnight wraps={{ preview.n_midnight_wraps }}
         </p>
 
-        <h3>Animal metadata (edit labels in the form →)</h3>
-        <table>
-          <tr>
-            <th>col</th><th>animal #</th><th>cage</th><th>label</th>
-          </tr>
-          {% for a in preview.animal_meta %}
-          <tr>
-            <td>{{ a.excel_col_letter }}</td>
-            <td>{{ a.animal_id }}</td>
-            <td>{{ a.cage_code }}</td>
-            <td>{{ a.animal_label }}</td>
-          </tr>
-          {% endfor %}
-        </table>
+        <div class="tabs">
+          <a
+            class="{{ 'active' if view != 'full' else '' }}"
+            href="{{ url_for('workspace', job_id=job_id, view='preview') }}"
+          >Preview</a>
+          <a
+            class="{{ 'active' if view == 'full' else '' }}"
+            href="{{ url_for('workspace', job_id=job_id, view='full') }}"
+          >Full dataframe</a>
+        </div>
 
-        <h3>Data preview (first rows)</h3>
-        <table>
-          <tr>
-            {% for col in preview.preview_columns %}
-              <th>{{ col }}</th>
+        {% if view == 'full' and full_df %}
+          <h3>Full dataframe ({{ full_df.n_rows }} rows)</h3>
+          <table>
+            <tr>
+              {% for col in full_df.columns %}
+                <th>{{ col }}</th>
+              {% endfor %}
+            </tr>
+            {% for row in full_df.rows %}
+            <tr>
+              {% for col in full_df.columns %}
+                <td>{{ row[col] }}</td>
+              {% endfor %}
+            </tr>
             {% endfor %}
-          </tr>
-          {% for row in preview.preview_rows %}
-          <tr>
-            {% for col in preview.preview_columns %}
-              <td>{{ row[col] }}</td>
+          </table>
+        {% else %}
+          <h3>Animal metadata (edit labels in the form →)</h3>
+          <table>
+            <tr>
+              <th>col</th><th>animal #</th><th>cage</th><th>label</th>
+            </tr>
+            {% for a in preview.animal_meta %}
+            <tr>
+              <td>{{ a.excel_col_letter }}</td>
+              <td>{{ a.animal_id }}</td>
+              <td>{{ a.cage_code }}</td>
+              <td>{{ a.animal_label }}</td>
+            </tr>
             {% endfor %}
-          </tr>
-          {% endfor %}
-        </table>
+          </table>
+
+          <h3>Data preview (first rows)</h3>
+          <table>
+            <tr>
+              {% for col in preview.preview_columns %}
+                <th>{{ col }}</th>
+              {% endfor %}
+            </tr>
+            {% for row in preview.preview_rows %}
+            <tr>
+              {% for col in preview.preview_columns %}
+                <td>{{ row[col] }}</td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </table>
+        {% endif %}
       {% else %}
         <p>No preview available.</p>
       {% endif %}

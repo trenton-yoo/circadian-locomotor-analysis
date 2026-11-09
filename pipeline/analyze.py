@@ -375,28 +375,33 @@ def analyze_locomotor(
         overall_mean_lengths.to_excel(writer, sheet_name="overall_means", index=False)
     summary_xlsx_bytes = summary_buf.getvalue()
 
+    # Download-only table: simplified columns, Day then Night per animal.
+    export_cols = [
+        "animal",
+        "cage_code",
+        "animal_label",
+        "period",
+        "duration_minutes",
+        "threshold",
+    ]
+    if episodes_all.empty:
+        episodes_export = pd.DataFrame(columns=export_cols)
+    else:
+        episodes_export = episodes_all.copy()
+        period_order = {"Day": 0, "Night": 1}
+        episodes_export["_period_ord"] = episodes_export["period"].map(period_order)
+        episodes_export = (
+            episodes_export.sort_values(
+                ["animal_id", "_period_ord", "threshold", "start_time"],
+                kind="mergesort",
+            )
+            .loc[:, export_cols]
+            .reset_index(drop=True)
+        )
+
     episodes_buf = BytesIO()
     with pd.ExcelWriter(episodes_buf, engine="xlsxwriter") as writer:
-        (
-            episodes_all
-            if not episodes_all.empty
-            else pd.DataFrame(
-                columns=[
-                    "animal",
-                    "animal_id",
-                    "cage_code",
-                    "animal_label",
-                    "period",
-                    "start_time",
-                    "end_time",
-                    "duration_bins",
-                    "duration_minutes",
-                    "total_counts",
-                    "threshold",
-                    "episode_id",
-                ]
-            )
-        ).to_excel(writer, sheet_name="episodes", index=False)
+        episodes_export.to_excel(writer, sheet_name="episodes", index=False)
     episodes_xlsx_bytes = episodes_buf.getvalue()
 
     return {

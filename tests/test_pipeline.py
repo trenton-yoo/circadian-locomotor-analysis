@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
@@ -57,6 +58,23 @@ def test_analyze_sample2_episode_counts():
     assert (result["episodes_all"]["duration_minutes"] >= 10).all()
     assert result["xlsx_bytes"] is not None
     assert len(result["summary_records"]) == 16  # 8 animals × 2 periods
+    # Internal episodes keep full columns; download xlsx is simplified + Day→Night
+    assert "start_time" in result["episodes_all"].columns
+    export = pd.read_excel(BytesIO(result["episodes_xlsx_bytes"]))
+    assert list(export.columns) == [
+        "animal",
+        "cage_code",
+        "animal_label",
+        "period",
+        "duration_minutes",
+        "threshold",
+    ]
+    for animal in export["animal"].drop_duplicates():
+        periods = export.loc[export["animal"] == animal, "period"].tolist()
+        if "Day" in periods and "Night" in periods:
+            last_day = max(i for i, p in enumerate(periods) if p == "Day")
+            first_night = min(i for i, p in enumerate(periods) if p == "Night")
+            assert last_day < first_night
 
 
 def test_excel_serial_time_not_clock_hm():
