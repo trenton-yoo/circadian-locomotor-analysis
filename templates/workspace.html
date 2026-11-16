@@ -105,6 +105,10 @@
             href="{{ url_for('workspace', job_id=job_id, phase='analysis', view='episodes') }}"
           >All episodes</a>
           <a
+            class="{{ 'active' if view == 'frequencies' else '' }}"
+            href="{{ url_for('workspace', job_id=job_id, phase='analysis', view='frequencies') }}"
+          >Episode frequencies</a>
+          <a
             class="{{ 'active' if view == 'histogram' else '' }}"
             href="{{ url_for('workspace', job_id=job_id, phase='analysis', view='histogram') }}"
           >Relative frequency</a>
@@ -142,6 +146,28 @@
           </table>
           <p>
             <a class="button" href="{{ url_for('download_episodes', job_id=job_id) }}">Download all_episodes.xlsx</a>
+          </p>
+
+        {% elif view == 'frequencies' and freq %}
+          <h3>Episode frequencies ({{ freq.n_rows }} rows)</h3>
+          <table>
+            <tr>
+              {% for col in freq.columns %}
+                <th>{{ col }}</th>
+              {% endfor %}
+            </tr>
+            {% for row in freq.rows %}
+            <tr>
+              {% for col in freq.columns %}
+                <td>{{ row[col] }}</td>
+              {% endfor %}
+            </tr>
+            {% else %}
+            <tr><td colspan="{{ freq.columns|length }}">No episodes for this selection.</td></tr>
+            {% endfor %}
+          </table>
+          <p>
+            <a class="button" href="{{ url_for('download_frequencies', job_id=job_id) }}">Download episode_frequencies.xlsx</a>
           </p>
 
         {% elif view == 'histogram' and hist %}
@@ -266,7 +292,43 @@
       {% endif %}
     </div>
 
-    {% if phase == 'analysis' and view == 'histogram' and hist %}
+    {% if phase == 'analysis' and view == 'frequencies' and freq %}
+    <div class="controls">
+      <h2>Frequency options</h2>
+      <form action="{{ url_for('workspace', job_id=job_id) }}" method="post">
+        <input type="hidden" name="phase" value="analysis">
+        <input type="hidden" name="view" value="frequencies">
+
+        <fieldset>
+          <legend>Animals</legend>
+          <div class="animal-list">
+            {% for a in freq.animals %}
+              <label class="check">
+                <input type="checkbox" name="freq_animal_{{ a.animal_id }}"
+                  {% if a.animal_id in freq.selected %}checked{% endif %}>
+                {{ a.animal_id }}{% if a.animal_label %} · {{ a.animal_label }}{% endif %}
+              </label>
+            {% endfor %}
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Period</legend>
+          <label class="check">
+            <input type="checkbox" name="period_day" {% if freq.period_day %}checked{% endif %}>
+            Day
+          </label>
+          <label class="check">
+            <input type="checkbox" name="period_night" {% if freq.period_night %}checked{% endif %}>
+            Night
+          </label>
+        </fieldset>
+
+        <button class="confirm" type="submit">Update table</button>
+      </form>
+    </div>
+
+    {% elif phase == 'analysis' and view == 'histogram' and hist %}
     <div class="controls">
       <h2>Histogram options</h2>
       <form action="{{ url_for('workspace', job_id=job_id) }}" method="post">

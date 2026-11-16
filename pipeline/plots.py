@@ -182,3 +182,87 @@ def animal_options_from_results(results: Dict[str, Any]) -> List[Dict[str, Any]]
                 "animal_label": row.get("animal_label") or "",
             }
     return [seen[k] for k in sorted(seen)]
+
+
+def build_episode_frequency_table(
+    episodes: Sequence[Dict[str, Any]],
+    animal_ids: Optional[Sequence[int]] = None,
+    periods: Optional[Sequence[str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Relative-frequency rows of episode length per animal × period.
+
+    Order: animal_id ascending; within each animal, Day then Night;
+    within each animal×period, episode length ascending.
+
+    Each row:
+      animal #, episode length, relative frequency, period, cage, label
+    """
+    wanted_animals = None if animal_ids is None else {int(a) for a in animal_ids}
+    if periods is None:
+        period_list = ["Day", "Night"]
+    else:
+        period_list = [p for p in periods if p in {"Day", "Night"}]
+        if not period_list:
+            period_list = ["Day", "Night"]
+
+    # Collect (animal_id, period) → durations + meta
+    groups: Dict[Tuple[int, str], List[float]] = {}
+    meta: Dict[int, Dict[str, str]] = {}
+    for ep in episodes:
+        aid = int(ep["animal_id"])
+        if wanted_animals is not None and aid not in wanted_animals:
+            continue
+        period = ep.get("period")
+        if period not in period_list:
+            continue
+        groups.setdefault((aid, str(period)), []).append(float(ep["duration_minutes"]))
+        if aid not in meta:
+            meta[aid] = {
+                "cage": "" if ep.get("cage_code") is None else str(ep.get("cage_code") or ""),
+                "label": ""
+                if ep.get("animal_label") is None
+                else str(ep.get("animal_label") or ""),
+            }
+
+    rows: List[Dict[str, Any]] = []
+    for aid in sorted(meta.keys()):
+        for period in period_list:
+            vals = groups.get((aid, period))
+            if not vals:
+                continue
+            n = len(vals)
+            counts: Dict[float, int] = {}
+            for v in vals:
+                counts[v] = counts.get(v, 0) + 1
+            for length in sorted(counts.keys()):
+                rows.append(
+                    {
+                        "animal #": aid,
+                        "episode length": length,
+                        "relative frequency": round(counts[length] / n, 6),
+                        "period": period,
+                        "cage": meta[aid]["cage"],
+                        "label": meta[aid]["label"],
+                    }
+                )
+    return rows
+
+
+def episode_frequency_xlsx_bytes(rows: Sequence[Dict[str, Any]]) -> bytes:
+    """Write the episode-frequency table to an Excel workbook."""
+    import pandas as pd
+
+    cols = [
+        "animal #",
+        "episode length",
+        "relative frequency",
+        "period",
+        "cage",
+        "label",
+    ]
+    df = pd.DataFrame(list(rows), columns=cols) if rows else pd.DataFrame(columns=cols)
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+        df.to_excel(writer, sheet_name="episode_frequencies", index=False)
+    return buf.getvalue()

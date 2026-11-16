@@ -9,7 +9,10 @@ import pandas as pd
 import pytest
 
 from pipeline.analyze import analyze_locomotor, get_period
-from pipeline.plots import build_relative_frequency_histograms
+from pipeline.plots import (
+    build_episode_frequency_table,
+    build_relative_frequency_histograms,
+)
 from pipeline.preprocess import (
     fmt_clock,
     inspect_workbook_sheets,
@@ -113,6 +116,65 @@ def test_relative_frequency_histogram_two_panels():
     assert stats[0]["n"] == 2
     assert stats[0]["mean"] == 15.0
     assert stats[1]["n"] == 2
+
+
+def test_episode_frequency_table_order_and_values():
+    episodes = [
+        {
+            "animal_id": 2,
+            "cage_code": "C2",
+            "animal_label": "B",
+            "period": "Night",
+            "duration_minutes": 25,
+        },
+        {
+            "animal_id": 1,
+            "cage_code": "C1",
+            "animal_label": "A",
+            "period": "Night",
+            "duration_minutes": 30,
+        },
+        {
+            "animal_id": 1,
+            "cage_code": "C1",
+            "animal_label": "A",
+            "period": "Day",
+            "duration_minutes": 10,
+        },
+        {
+            "animal_id": 1,
+            "cage_code": "C1",
+            "animal_label": "A",
+            "period": "Day",
+            "duration_minutes": 10,
+        },
+        {
+            "animal_id": 1,
+            "cage_code": "C1",
+            "animal_label": "A",
+            "period": "Day",
+            "duration_minutes": 20,
+        },
+        {
+            "animal_id": 2,
+            "cage_code": "C2",
+            "animal_label": "B",
+            "period": "Day",
+            "duration_minutes": 15,
+        },
+    ]
+    rows = build_episode_frequency_table(episodes, animal_ids=[1, 2], periods=["Day", "Night"])
+    assert [r["animal #"] for r in rows] == [1, 1, 1, 2, 2]
+    assert [r["period"] for r in rows] == ["Day", "Day", "Night", "Day", "Night"]
+    assert rows[0]["episode length"] == 10
+    assert rows[0]["relative frequency"] == pytest.approx(2 / 3, abs=1e-6)
+    assert rows[1]["episode length"] == 20
+    assert rows[1]["relative frequency"] == pytest.approx(1 / 3, abs=1e-6)
+    assert rows[0]["cage"] == "C1"
+    assert rows[0]["label"] == "A"
+    day_only = build_episode_frequency_table(episodes, animal_ids=[1], periods=["Day"])
+    assert all(r["period"] == "Day" for r in day_only)
+    assert len(day_only) == 2
 
 
 @pytest.mark.skipif(not SAMPLE2.exists(), reason="sample2.xlsx not present")

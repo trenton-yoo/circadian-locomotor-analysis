@@ -32,7 +32,12 @@ from flask import (
 )
 
 from pipeline.analyze import analyze_locomotor, build_summary_payload
-from pipeline.plots import animal_options_from_results, build_relative_frequency_histograms
+from pipeline.plots import (
+    animal_options_from_results,
+    build_episode_frequency_table,
+    build_relative_frequency_histograms,
+    episode_frequency_xlsx_bytes,
+)
 from pipeline.preprocess import (
     build_full_dataframe_table,
     build_preview_payload,
@@ -342,6 +347,69 @@ def _histogram_context_from_request(results: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _frequencies_context_from_request(
+    results: Dict[str, Any],
+    job_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build episode-frequency table + form defaults from GET/POST."""
+    src = request.form if request.method == "POST" else request.args
+    animals = animal_options_from_results(results)
+
+    selected: List[int] = []
+    for key in src:
+        if key.startswith("freq_animal_"):
+            try:
+                selected.append(int(key.split("_", 2)[2]))
+            except ValueError:
+                pass
+
+    # Default: all animals when first opening the tab (no animal params).
+    has_animal_params = any(k.startswith("freq_animal_") for k in src)
+    if not has_animal_params:
+        selected = [int(a["animal_id"]) for a in animals]
+
+    has_period_params = "period_day" in src or "period_night" in src
+    if has_period_params:
+        periods: List[str] = []
+        if src.get("period_day") in {"1", "on", "true", "True"}:
+            periods.append("Day")
+        if src.get("period_night") in {"1", "on", "true", "True"}:
+            periods.append("Night")
+        if not periods:
+            periods = ["Day", "Night"]
+    else:
+        periods = ["Day", "Night"]
+
+    rows = build_episode_frequency_table(
+        results.get("episodes") or [],
+        animal_ids=selected or None,
+        periods=periods,
+    )
+    xlsx_bytes = episode_frequency_xlsx_bytes(rows)
+    if job_id:
+        try:
+            (job_path(job_id) / "episode_frequencies.xlsx").write_bytes(xlsx_bytes)
+        except OSError:
+            pass
+
+    return {
+        "animals": animals,
+        "selected": set(selected),
+        "period_day": "Day" in periods,
+        "period_night": "Night" in periods,
+        "rows": rows,
+        "n_rows": len(rows),
+        "columns": [
+            "animal #",
+            "episode length",
+            "relative frequency",
+            "period",
+            "cage",
+            "label",
+        ],
+    }
+
+
 @app.route("/job/<job_id>", methods=["GET", "POST"])
 def workspace(job_id: str):
     jdir = job_path(job_id)
@@ -367,15 +435,18 @@ def workspace(job_id: str):
         preview = None
 
     hist = None
+    freq = None
     full_df = None
     if phase == "analysis":
-        if view not in {"summary", "episodes", "histogram"}:
+        if view not in {"summary", "episodes", "frequencies", "histogram"}:
             view = "summary"
         if results is None or results.get("status") != "ok":
             # No saved analysis UI state required — send user back to preview.
             return redirect(url_for("workspace", job_id=job_id))
         if view == "histogram":
             hist = _histogram_context_from_request(results)
+        elif view == "frequencies":
+            freq = _frequencies_context_from_request(results, job_id=job_id)
     else:
         phase = "preview"
         results = None
@@ -399,6 +470,7 @@ def workspace(job_id: str):
         error=error,
         preprocessed_b64=token,
         hist=hist,
+        freq=freq,
         full_df=full_df,
     )
 
@@ -496,7 +568,13 @@ def analyze(job_id: str):
 def back_to_preview(job_id: str):
     """Return to phase 1 and discard phase-2 analysis artifacts."""
     jdir = job_path(job_id)
-    for name in ("results.json", "analysis_summary.xlsx", "all_episodes.xlsx", "summary.json"):
+    for name in (
+        "results.json",
+        "analysis_summary.xlsx",
+        "all_episodes.xlsx",
+        "episode_frequencies.xlsx",
+        "summary.json",
+    ):
         path = jdir / name
         if path.exists():
             path.unlink()
@@ -527,6 +605,22 @@ def download_episodes(job_id: str):
         path,
         as_attachment=True,
         download_name=f"all_episodes_{job_id}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@app.route("/job/<job_id>/download/frequencies", methods=["GET"])
+def download_frequencies(job_id: str):
+    path = job_path(job_id) / "episode_frequencies.xlsx"
+    if not path.exists():
+        flash("Episode frequencies file not found. Open the Episode frequencies tab first.")
+        return redirect(
+            url_for("workspace", job_id=job_id, phase="analysis", view="frequencies")
+        )
+    return send_file(
+        path,
+        as_attachment=True,
+        download_name=f"episode_frequencies_{job_id}.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
